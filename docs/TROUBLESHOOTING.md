@@ -1,26 +1,44 @@
-# Troubleshooting
+# Troubleshooting RC7
 
-## Connection or pairing fails
+## Server is not reachable
 
-- Check the Pi process: `ss -ltnp | grep :8092` and local health endpoint: `curl -i http://127.0.0.1:8092/api/health`.
-- Check `sudo tailscale funnel status`; confirm the **same path** `/pocketvault` and device hostname in Android.
-- A new pairing code invalidates the previous code. Codes expire in five minutes. Verify date/time is synchronized.
+```sh
+systemctl status pocketvault --no-pager
+sudo journalctl -u pocketvault -n 50 --no-pager
+ss -ltnp | grep :8092
+curl -i http://127.0.0.1:8092/api/health
+```
 
-## HTTP 404 during logout
+If local health works, check tailscaled, the selected Serve/Funnel status, HTTPS hostname and /pocketvault prefix. A bare root URL can return 404. A storage request without a token should return 401.
 
-The RC2 Android app requires authenticated `POST /api/device/revoke`. Deploy the compatible RC2 server from this repository. Do not clear credentials on a failed logout unless you separately revoke the token.
+## Pairing fails
 
-## Upload failures or stuck backup
+Generate a fresh code using the pair command in the installation directory. Codes expire after five minutes, are single use, and are limited to five incorrect attempts. Check the phone URL and Pi clock.
 
-- Confirm data directory permissions and `df -h`; the server maintains a 3 GB disk free-space reserve.
-- The server limits individual files to 20 GB and chunks to 4 MiB.
-- Confirm Wi-Fi, battery and folder permissions and check device diagnostics. Use test data when troubleshooting public access.
-- Upload interruption should retain incomplete data for retry, but exact reuse of the saved byte offset has not been independently verified on RC2.
+## Upload failures
 
-## Incompatible installed APK signature
+```sh
+df -h ~/tailscale/PocketVault
+du -sh ~/tailscale/PocketVault/data
+```
 
-`INSTALL_FAILED_UPDATE_INCOMPATIBLE` means an installed app with the same package name was signed by a different key. Back up relevant settings and safely uninstall the old debug build before installing the signed release. Never remove original phone files.
+Allow enough free space above the 3 GB reserve. Individual files are limited to 20 GB and request chunks to 4 MiB. HTTP 503 means retry later; 507 indicates insufficient storage; 409 may require resuming from the server's reported offset. Verify folder permissions, network and client battery settings. Incomplete uploads older than 24 hours are cleaned during upload processing. Exact Android resume behavior is not verified here.
 
-## Reporting
+## Missing thumbnails
 
-Include sanitized server logs, application version, OS version, exact error response and reproducible steps. Remove token values, passwords, personal hostnames and media filenames if sensitive.
+```sh
+cd ~/tailscale/PocketVault
+python3 application/server.py thumbnail-status
+python3 application/server.py repair-thumbnails
+```
+
+Check Pillow and FFmpeg dependencies. Repair requeues jobs; the running worker processes them. Unsupported formats may remain unavailable.
+
+## Restart and logs
+
+```sh
+sudo systemctl restart pocketvault
+sudo journalctl -u pocketvault -f
+```
+
+HTTP request logging is intentionally disabled; journal output may be limited. For failed logout, revoke the device separately from the Pi before discarding credentials. Report sanitized errors, server/client versions and reproduction steps; do not include tokens, pairing codes or personal media.
