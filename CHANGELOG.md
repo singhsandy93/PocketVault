@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.0.0-rc7]
+
+- Server health identifies RC7; source-folder storage and legacy date-folder relocation on confirmed full paths.
+- Deleted-hash suppression for all-reference deletion, cleared on restore; trash media access and gallery filters.
+- Documented Raspberry Pi deployment, Tailscale Serve/Funnel, systemd automatic startup, pairing, usage, troubleshooting and upgrades.
+- RC7 APK and Android source are not published in this update. No new server behavior was introduced by the documentation changes; full RC7 regression/security validation remains pending.
+
 ## [5.0.0-rc2] — 2026-11-27
 
 - PocketVault Android application package `com.pocketvault.app`; modern dark appearance by default.
