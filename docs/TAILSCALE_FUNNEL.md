@@ -1,34 +1,47 @@
-# Tailscale and optional public Funnel
+# Tailscale remote access
 
-Official reference: https://tailscale.com/docs/install/linux and https://tailscale.com/docs/reference/tailscale-cli/funnel
+Official references: [Linux installation](https://tailscale.com/docs/install/linux), [Funnel CLI](https://tailscale.com/docs/reference/tailscale-cli/funnel), [Serve CLI](https://tailscale.com/docs/reference/tailscale-cli/serve).
 
-## Install Tailscale on Raspberry Pi
+## Install and sign in
 
-Review Tailscale's official install script before running it:
+Review the official installation script before executing it.
 
 ```sh
-curl -fsSL https://tailscale.com/install.sh | sh
+curl -fsSL https://tailscale.com/install.sh -o /tmp/tailscale-install.sh
+less /tmp/tailscale-install.sh
+sh /tmp/tailscale-install.sh
+sudo systemctl enable --now tailscaled
 sudo tailscale up
-sudo tailscale status
+tailscale status
 ```
 
-Finish sign-in through the authentication URL shown by Tailscale. Install/upgrade Tailscale from its documented package repositories for your Raspberry Pi OS release.
+Follow the sign-in URL and complete authorization.
 
-## Private versus public
+## Choose access mode
 
-Tailscale **Serve** keeps access within your authenticated tailnet; **Funnel is publicly reachable** over HTTPS without Tailscale installed on the visitor's device. Until RC2 hardening is complete, prefer private Serve or non-sensitive test data only.
-
-## Configure a separate PocketVault Funnel path
-
-Start PocketVault on port `8092` first, then:
+Prefer private Serve for sensitive media. Install Tailscale on the phone and connect it to your authorized tailnet. For a private route:
 
 ```sh
+sudo tailscale serve --bg --https=443 --set-path=/pocketvault 8092
+sudo tailscale serve status
+```
+
+Alternatively, Funnel allows public internet access without Tailscale on the phone. RC7 is a release candidate, not independently security-certified. Use non-sensitive test data for public access. Follow any HTTPS or Funnel authorization prompts.
+
+```sh
+sudo tailscale funnel status
 sudo tailscale funnel --bg --https=443 --set-path=/pocketvault 8092
 sudo tailscale funnel status
 ```
 
-Use the HTTPS URL and `/pocketvault` path displayed by Tailscale as your Android server URL, for example `https://your-device.your-tailnet.ts.net/pocketvault`.
+Choose one mode for this HTTPS port: Funnel can make the listener public. Do not reset existing Serve/Funnel configuration or assume other routes on the same listener remain private. Inspect existing configuration before changing it.
 
-**Avoid `tailscale funnel reset`:** it may remove other unrelated routes. If you have existing Funnel configuration, inspect `sudo tailscale funnel status` and preserve every preexisting route. Test `https://YOUR-TAILSCALE-FQDN/pocketvault/api/health` and expect a health JSON response. If the app requests storage without pairing, `401 Unauthorized` is expected.
+Use the displayed HTTPS hostname with /pocketvault as the app server URL, e.g. https://your-pi.your-tailnet.ts.net/pocketvault (replace the example). Test by appending /api/health:
 
-Funnel access controls, node configuration and command syntax can change; consult the official Tailscale documentation before applying changes. Funnel requires account/tailnet eligibility and HTTPS configuration.
+```sh
+curl -fsS https://YOUR-HOSTNAME/pocketvault/api/health
+```
+
+Background configuration is persistent across normal reboots; tailscaled and PocketVault must both be enabled. After reboot check the selected mode's status and both local and remote health endpoints. Do not repeatedly run setup commands at boot. Account permissions, node authentication expiry and HTTPS eligibility can affect access.
+
+Next: [Android setup](ANDROID_SETUP.md).
