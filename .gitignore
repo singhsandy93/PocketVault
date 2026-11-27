@@ -1,0 +1,32 @@
+# Gradle / Android
+.gradle/
+.idea/
+**/build/
+local.properties
+*.iml
+.DS_Store
+
+# Never commit signing keys or credentials
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+*.env
+.env*
+!*.env.example
+
+# Backup data / secrets / generated files
+**/data/
+*.db
+*.db-wal
+*.db-shm
+__pycache__/
+*.pyc
+originals/
+incomplete/
+thumbnails/
+
+# Release binaries belong in GitHub Releases
+*.apk
+*.aab
