@@ -39,6 +39,8 @@ def init():
     DB.chmod(0o600)
     media_init()
     migrate_schema()
+    with database() as c:
+        c.execute("CREATE TABLE IF NOT EXISTS deleted_hashes (hash TEXT PRIMARY KEY)")
 
 def pair():
     code = f'{secrets.randbelow(1000000):06d}'
@@ -206,10 +208,29 @@ def start_upload(c, device, obj):
         raise MediaError(400,'invalid hash or size')
     if not isinstance(name,str) or not name or name in ('.','..') or any(x in name for x in ('/','\\','\x00')) or len(name.encode())>220 or not isinstance(source,str) or not 0<len(source)<=1024:
         raise MediaError(400,'invalid name or source')
+    if c.execute("SELECT 1 FROM deleted_hashes WHERE hash=?",(sha,)).fetchone():
+        return {"suppressed":True,"sha256":sha}
+    source_folder(source)
     date=media_date(obj)
     row=c.execute('SELECT path,size FROM media WHERE hash=?',(sha,)).fetchone()
     if row:
         if row[1]!=size or not (DATA/row[0]).is_file(): raise MediaError(409,'stored media mismatch')
+        # A full path reported by RC6 confirms the location of a legacy date-based file.
+        old=safe_path(row[0],'originals')
+        if obj.get('source_full') is True and re.fullmatch(r'originals/\d{4}/\d{2}/[^/]+',row[0]):
+            folder=source_folder(source); folder.mkdir(parents=True,exist_ok=True)
+            target=folder/name; n=0
+            while target!=old:
+                try: os.link(old,target); break
+                except FileExistsError:
+                    if os.path.samefile(old,target): break
+                    n+=1; target=folder/(Path(name).stem+'_'+str(n)+Path(name).suffix)
+            if target!=old:
+                c.execute('UPDATE media SET path=? WHERE hash=?',(str(target.relative_to(DATA)),sha))
+                add_ref(c,device,sha,source,name,date)
+                c.commit()
+                old.unlink(missing_ok=True)
+                return {'complete':True,'sha256':sha}
         add_ref(c,device,sha,source,name,date)
         return {'complete':True,'sha256':sha}
     row=c.execute('SELECT id FROM uploads WHERE device=? AND hash=? AND size=? AND source=? AND name=? AND media_date=?',(device,sha,size,source,name,date)).fetchone()
@@ -226,8 +247,19 @@ def upload_row(c, device, uid):
     if not row: raise MediaError(404,'upload not found')
     return row
 
+def source_folder(source):
+    parts=source.split('/')
+    if any(not x or x in ('.','..') or '\\' in x or '\x00' in x or len(x.encode())>220 for x in parts):
+        raise MediaError(400,'invalid source folder')
+    root=(DATA/'originals').resolve()
+    folder=root.joinpath(*parts).resolve()
+    if not folder.is_relative_to(root): raise MediaError(400,'invalid source folder')
+    return folder
+
 def finish_upload(c,device,uid):
     sha,size,source,name,date=upload_row(c,device,uid)
+    if c.execute("SELECT 1 FROM deleted_hashes WHERE hash=?",(sha,)).fetchone():
+        return {"suppressed":True,"sha256":sha}
     path=DATA/'incomplete'/uid
     if not path.exists() or path.stat().st_size!=size: raise MediaError(409,'upload incomplete')
     h=hashlib.sha256()
@@ -238,13 +270,13 @@ def finish_upload(c,device,uid):
     if row:
         if row[1]!=size or not (DATA/row[0]).is_file(): raise MediaError(409,'stored media mismatch')
     else:
-        folder=DATA/'originals'/date[:4]/date[5:7]; folder.mkdir(parents=True,exist_ok=True)
+        folder=source_folder(source); folder.mkdir(parents=True,exist_ok=True)
         target=folder/name; stem,suffix=Path(name).stem,Path(name).suffix
         n=0
         while True:
             try: os.link(path,target); break
             except FileExistsError:
-                n+=1; target=folder/(stem+'_'+sha[:8]+('' if n==1 else '_'+str(n))+suffix)
+                n+=1; target=folder/(stem+'_'+str(n)+suffix)
         c.execute('INSERT INTO media VALUES (?,?,?)',(sha,str(target.relative_to(DATA)),size))
     add_ref(c,device,sha,source,name,date)
     c.execute('DELETE FROM uploads WHERE id=?',(uid,))
@@ -261,7 +293,7 @@ import subprocess
 from urllib.parse import urlsplit, parse_qs, quote
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-PHOTO_FORMATS={'JPEG':'image/jpeg','PNG':'image/png','GIF':'image/gif','WEBP':'image/webp','BMP':'image/bmp','TIFF':'image/tiff'}
+PHOTO_FORMATS={'JPEG':'image/jpeg','MPO':'image/jpeg','PNG':'image/png','GIF':'image/gif','WEBP':'image/webp','BMP':'image/bmp','TIFF':'image/tiff'}
 VIDEO_EXT={'.mp4': 'video/mp4', '.mov':'video/quicktime', '.m4v':'video/mp4', '.webm':'video/webm', '.mkv':'video/x-matroska', '.avi':'video/x-msvideo', '.3gp':'video/3gpp'}
 
 def safe_path(relative, folder):
@@ -275,6 +307,7 @@ def thumbnail_info(path):
         with Image.open(path) as im:
             mime=PHOTO_FORMATS.get(im.format)
             if not mime: return None
+            if im.format == "MPO": im.seek(0)
             im=ImageOps.exif_transpose(im)
             width,height=im.size
             im.thumbnail((320,320))
@@ -323,9 +356,23 @@ def _process_thumbnail():
             c.execute("UPDATE thumbnail_jobs SET status='failed',last_error=?,updated=? WHERE hash=?",(type(e).__name__,time.time(),sha))
     return True
 
+def repair_thumbnails(retry_failed=False):
+    """Requeue missing files and optionally exhausted/unsupported jobs; originals untouched."""
+    count=0
+    with MEDIA_LOCK, database() as c:
+        rows=c.execute("SELECT j.hash,j.status,x.thumbnail_path FROM thumbnail_jobs j JOIN media_metadata x ON x.hash=j.hash WHERE EXISTS(SELECT 1 FROM media_refs r WHERE r.hash=j.hash)").fetchall()
+        for sha,status,relative in rows:
+            missing=status=='completed' and (not relative or not safe_path(relative,'thumbnails').is_file())
+            if missing or (retry_failed and status in ('failed','unsupported')):
+                c.execute("UPDATE thumbnail_jobs SET status='pending',attempts=0,last_error=NULL,updated=? WHERE hash=?",(time.time(),sha))
+                if missing: c.execute('UPDATE media_metadata SET thumbnail_path=NULL WHERE hash=?',(sha,))
+                count+=1
+    return count
+
 def thumbnail_worker(stop):
     with database() as c:
         c.execute("UPDATE thumbnail_jobs SET status=CASE WHEN attempts>=3 THEN 'failed' ELSE 'pending' END WHERE status='processing'")
+    repair_thumbnails(retry_failed=True)
     while not stop.is_set():
         try:
             if process_thumbnail(): continue
@@ -333,7 +380,7 @@ def thumbnail_worker(stop):
         stop.wait(1)
 
 def gallery(c, query):
-    allowed={'device','folder','from','to','page','limit'}
+    allowed={'device','folder','name','from','to','page','limit'}
     if set(query)-allowed or any(len(v)!=1 for v in query.values()): raise MediaError(400,'invalid filters')
     q={k:v[0] for k,v in query.items()}
     page=int(q.get('page','1')); limit=int(q.get('limit','50'))
@@ -344,6 +391,8 @@ def gallery(c, query):
             if key in ('from','to') and datetime.strptime(q[key],'%Y-%m-%d').date().isoformat()!=q[key]: raise MediaError(400,'invalid date')
             clauses.append('r.'+column+op+'?'); args.append(q[key])
     if q.get('from','')>q.get('to','9999'): raise MediaError(400,'invalid date range')
+    if 'name' in q:
+        clauses.append('instr(lower(r.name),lower(?))>0'); args.append(q['name'])
     where=' WHERE '+' AND '.join(clauses) if clauses else ''
     base=' FROM media_refs r'+where
     total=c.execute('SELECT COUNT(DISTINCT r.hash)'+base,args).fetchone()[0]
@@ -439,6 +488,8 @@ def trash_action(c,device,path,obj):
             rows=selected
         elif scope!='all': raise MediaError(400,'invalid scope')
         if not rows: raise MediaError(404,'media not found')
+        if scope=='all':
+            c.execute('INSERT OR IGNORE INTO deleted_hashes VALUES (?)',(sha,))
         now=time.time()
         c.executemany('INSERT INTO trash_refs(device,hash,source,name,media_date,deleted_by,deleted_at,expires_at) VALUES (?,?,?,?,?,?,?,?)',[r+(device,now,now+TRASH_RETENTION) for r in rows])
         c.executemany('DELETE FROM media_refs WHERE device=? AND hash=? AND source=? AND name=? AND media_date=?',rows)
@@ -449,6 +500,7 @@ def trash_action(c,device,path,obj):
             row=c.execute('SELECT device,hash,source,name,media_date FROM trash_refs WHERE id=? AND expires_at>?',(i,time.time())).fetchone()
             if not row: raise MediaError(404,'recoverable reference not found')
             rows.append(row)
+        c.executemany('DELETE FROM deleted_hashes WHERE hash=?',[(r[1],) for r in rows])
         c.executemany('INSERT OR IGNORE INTO media_refs VALUES (?,?,?,?,?)',rows)
         c.executemany('DELETE FROM trash_refs WHERE id=?',[(i,) for i in ids])
         return {'restored':len(ids)}
@@ -486,9 +538,16 @@ class Handler(BaseHTTPRequestHandler):
                 with database() as c:
                     c.execute('BEGIN')
                     now=time.time()
-                    total=c.execute('SELECT COUNT(*) FROM trash_refs WHERE expires_at>?',(now,)).fetchone()[0]
-                    rows=c.execute('SELECT id,device,hash,source,name,media_date,deleted_by,deleted_at,expires_at FROM trash_refs WHERE expires_at>? ORDER BY deleted_at DESC,id DESC LIMIT ? OFFSET ?',(now,limit,(page-1)*limit))
-                    result={'items':[dict(zip(('id','device','sha256','folder','name','date','deleted_by','deleted_at','expires_at'),r)) for r in rows],'total':total,'page':page,'limit':limit}
+                    total=c.execute('SELECT COUNT(DISTINCT hash) FROM trash_refs WHERE expires_at>?',(now,)).fetchone()[0]
+                    hashes=c.execute('SELECT hash FROM trash_refs WHERE expires_at>? GROUP BY hash ORDER BY MAX(deleted_at) DESC,hash LIMIT ? OFFSET ?',(now,limit,(page-1)*limit)).fetchall()
+                    items=[]
+                    for (sha,) in hashes:
+                        refs=[dict(zip(('id','device','sha256','folder','name','date','deleted_by','deleted_at','expires_at'),r)) for r in c.execute('SELECT id,device,hash,source,name,media_date,deleted_by,deleted_at,expires_at FROM trash_refs WHERE hash=? AND expires_at>? ORDER BY id',(sha,now))]
+                        item=dict(refs[0]); item['references']=refs; item['ids']=[r['id'] for r in refs]; item['expires_at']=min(r['expires_at'] for r in refs)
+                        meta=c.execute('SELECT x.media_type,x.mime_type,j.status FROM media_metadata x JOIN thumbnail_jobs j ON j.hash=x.hash WHERE x.hash=?',(sha,)).fetchone()
+                        if meta: item.update(zip(('media_type','mime_type','thumbnail_status'),meta))
+                        items.append(item)
+                    result={'items':items,'total':total,'page':page,'limit':limit}
             self.reply(200,result)
         except MediaError as e: self.reply(e.status,{'error':e.message})
         except (ValueError,TypeError,TimeoutError): self.reply(400,{'error':'invalid request'})
@@ -503,9 +562,14 @@ class Handler(BaseHTTPRequestHandler):
                 if url.path=='/api/gallery': return self.reply(200,gallery(c,parse_qs(url.query,keep_blank_values=True,max_num_fields=12)))
                 if url.path=='/api/gallery/filters':
                     return self.reply(200,{'devices':[{'id':i,'name':n} for i,n in c.execute('SELECT DISTINCT d.id,d.name FROM devices d JOIN media_refs r ON r.device=d.id ORDER BY d.name,d.id')],'folders':[r[0] for r in c.execute('SELECT DISTINCT source FROM media_refs ORDER BY source')]})
-                match=re.fullmatch(r'/api/media/([0-9a-f]{64})(?:/(thumbnail|download|stream))?',url.path)
+                match=re.fullmatch(r'/api/(media|trash-media)/([0-9a-f]{64})(?:/(thumbnail|download|stream))?',url.path)
                 if not match: raise MediaError(404,'not found')
-                sha,action=match.groups(); detail=media_detail(c,sha)
+                kind,sha,action=match.groups()
+                if kind=='media': detail=media_detail(c,sha)
+                else:
+                    row=c.execute('SELECT t.name,x.media_type,x.mime_type FROM trash_refs t JOIN media_metadata x ON x.hash=t.hash WHERE t.hash=? AND t.expires_at>? LIMIT 1',(sha,time.time())).fetchone()
+                    if not row: raise MediaError(404,'trash media not found')
+                    detail=dict(zip(('name','media_type','mime_type'),row))
                 if not action: return self.reply(200,detail)
                 if action=='thumbnail':
                     relative=c.execute('SELECT thumbnail_path FROM media_metadata WHERE hash=?',(sha,)).fetchone()[0]
@@ -549,9 +613,9 @@ class Handler(BaseHTTPRequestHandler):
         pass  # Do not log URLs or credentials.
     def do_GET(self):
         if urlsplit(self.path).path=='/api/trash': return self.trash_request()
-        if self.path.startswith(('/api/gallery','/api/media/')): return self.media_get()
+        if self.path.startswith(('/api/gallery','/api/media/','/api/trash-media/')): return self.media_get()
         if self.path == '/api/health':
-            return self.reply(200, {'status':'ok','phase':3,'schema_version':1})
+            return self.reply(200, {'status':'ok','phase':3,'schema_version':1,'release':'5.0.0-rc7'})
         if self.path == '/api/storage':
             try:
                 auth = self.headers.get('Authorization','')
@@ -642,7 +706,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     p=argparse.ArgumentParser()
-    p.add_argument('command',choices=['init','serve','pair','devices','revoke'])
+    p.add_argument('command',choices=['init','serve','pair','devices','revoke','repair-thumbnails','thumbnail-status'])
     p.add_argument('device_id',nargs='?')
     p.add_argument('--port',type=int,default=8092)
     a=p.parse_args()
@@ -656,6 +720,11 @@ def main():
             cleaner.start()
             try: httpd.serve_forever()
             finally: stop.set(); worker.join(); cleaner.join()
+    elif a.command=='repair-thumbnails': print('Requeued:',repair_thumbnails(retry_failed=True))
+    elif a.command=='thumbnail-status':
+        with database() as c:
+            for row in c.execute("SELECT status,COALESCE(last_error,''),COUNT(*) FROM thumbnail_jobs GROUP BY status,last_error"):
+                print(*row)
     elif a.command=='pair': pair()
     elif a.command=='devices':
         with database() as c:
