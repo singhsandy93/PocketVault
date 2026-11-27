@@ -6,7 +6,7 @@ Self-hosted Android photo/video backup for Raspberry Pi, with optional Tailscale
 
 ## Components
 
-- **Android**: Kotlin/Jetpack Compose app `com.pocketvault.app`, Android 10+.
+- **Android**: signed APK distributed through GitHub Releases; **Android source code is not included in this repository**.
 - **Server**: Python 3.11, SQLite, SHA-256 integrity checks, chunked uploads, deduplication, device pairing and token revocation.
 - **Remote access**: Tailscale Funnel (public HTTPS) or Tailscale Serve (private tailnet).
 
@@ -20,7 +20,7 @@ Self-hosted Android photo/video backup for Raspberry Pi, with optional Tailscale
 6. Optionally configure Tailscale and a `/pocketvault` Funnel path. Enter the HTTPS URL in Android.
 7. Install the **signed** `PocketVault-v5.0.0-rc2.apk` when it is attached to GitHub Releases.
 
-**Important:** Full Android/server source and production installer are still being prepared for this repository. Do not assume the commands above form a hardened unattended deployment. Existing server data is under `data/` and the compatibility database is called `pibackup.db`; never rename or delete it without a backup.
+**Important:** Raspberry Pi server source and the production installer are still being prepared for this repository. Android source will not be uploaded. Do not assume the commands above form a hardened unattended deployment. Existing server data is under `data/` and the compatibility database is called `pibackup.db`; never rename or delete it without a backup.
 
 ## APK checksum
 
