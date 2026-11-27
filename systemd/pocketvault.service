@@ -1,0 +1,15 @@
+[Unit]
+Description=PocketVault backup server
+Wants=network-online.target
+After=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+User=YOUR_PI_USER
+WorkingDirectory=/home/YOUR_PI_USER/tailscale/PocketVault
+ExecStart=/usr/bin/python3 /home/YOUR_PI_USER/tailscale/PocketVault/application/server.py serve --port 8092
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
