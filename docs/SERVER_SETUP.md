@@ -1,10 +1,14 @@
-# Manual server setup — PocketVault RC2
+# Manual PocketVault server setup (RC2)
 
-> **Development / non-sensitive test use only:** RC2 server production hardening and unattended installer are pending. Do not overwrite an existing installation or its database.
+> RC2 is a test release. Production one-command installer and systemd service are not yet provided. Do **not** replace an existing server or its database without an independent backup. All commands below refer to a new, fresh install.
 
-Prerequisites: 64-bit Raspberry Pi OS Bookworm, Python 3.11, `python3-pil`, `ffmpeg` and free disk space.
+## Prerequisites
 
-After obtaining this repository's server source, for a **new** installation only:
+Raspberry Pi OS Bookworm, Python 3.11, Pillow (`python3-pil`), ffmpeg and enough disk space. See [Raspberry Pi setup](RASPBERRY_PI_SETUP.md).
+
+## New installation
+
+Download or clone this repository. On the Raspberry Pi, from repository root:
 
 ```sh
 mkdir -p ~/PocketVault/application ~/PocketVault/data
@@ -16,18 +20,22 @@ python3 application/server.py init
 python3 application/server.py serve --port 8092
 ```
 
-Leave the server running in the foreground (Ctrl+C to stop). In another terminal:
+The foreground command runs until Ctrl+C. In another SSH terminal, generate a time-limited pairing code:
 
 ```sh
 cd ~/PocketVault
 python3 application/server.py pair
+```
+
+Additional commands:
+
+```sh
 python3 application/server.py devices
-# Optional — revoke an identified device
 python3 application/server.py revoke DEVICE_ID
 ```
 
-Verify: `curl -i http://127.0.0.1:8092/api/health`. The server binds to loopback, not the LAN.
+Verify locally: `curl -fsS http://127.0.0.1:8092/api/health`. The server binds to loopback; it does not directly listen on the LAN. If enabled, Tailscale reverse-proxies it using Funnel or Serve.
 
-Data is stored under `~/PocketVault/data/` with compatibility database `pibackup.db`; original files are stored beneath `data/originals/`. Back up the entire data directory. **Do not rename `pibackup.db` or migrate an existing setup manually.**
+**Data location:** `~/PocketVault/data/` contains `pibackup.db`, `originals/`, `incomplete/` and `thumbnails/`. Back up the entire directory. Use distinct directories and ports for testing alongside existing installations.
 
-Systemd units, a supported `pocketvault` CLI wrapper and automatic installer remain pending.
+**Not yet shipped:** `pocketvault` command-line wrapper, production `setup.sh`, systemd unit, backup/migration tooling. Avoid running a legacy installer from a different PiBackup project.
