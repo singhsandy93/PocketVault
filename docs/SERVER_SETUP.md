@@ -1,41 +1,41 @@
-# Manual PocketVault server setup (RC2)
+# Install PocketVault RC7
 
-> RC2 is a test release. Production one-command installer and systemd service are not yet provided. Do **not** replace an existing server or its database without an independent backup. All commands below refer to a new, fresh install.
-
-## Prerequisites
-
-Raspberry Pi OS Bookworm, Python 3.11, Pillow (`python3-pil`), ffmpeg and enough disk space. See [Raspberry Pi setup](RASPBERRY_PI_SETUP.md).
-
-## New installation
-
-Download or clone this repository. On the Raspberry Pi, from repository root:
+For a fresh installation, complete [Pi preparation](RASPBERRY_PI_SETUP.md). Run as your normal Pi user, not root. Existing installations should follow the [upgrade guide](UPGRADE.md).
 
 ```sh
-mkdir -p ~/PocketVault/application ~/PocketVault/data
-cp server/application/server.py ~/PocketVault/application/server.py
-chmod 700 ~/PocketVault/data
-chmod 600 ~/PocketVault/application/server.py
-cd ~/PocketVault
+mkdir -p ~/tailscale/PocketVault/application
+curl -fL https://raw.githubusercontent.com/singhsandy93/PocketVault/main/server/application/server.py -o ~/tailscale/PocketVault/application/server.py
+cd ~/tailscale/PocketVault
 python3 application/server.py init
 python3 application/server.py serve --port 8092
 ```
 
-The foreground command runs until Ctrl+C. In another SSH terminal, generate a time-limited pairing code:
+In another SSH session:
 
 ```sh
-cd ~/PocketVault
+curl -fsS http://127.0.0.1:8092/api/health
+```
+
+Expect JSON containing status ok and release 5.0.0-rc7 for this version. The server listens only on loopback. Stop the foreground server with Ctrl+C before installing [automatic startup](AUTO_START.md). Then configure [Tailscale](TAILSCALE_FUNNEL.md).
+
+## Pair and manage devices
+
+```sh
+cd ~/tailscale/PocketVault
 python3 application/server.py pair
-```
-
-Additional commands:
-
-```sh
 python3 application/server.py devices
-python3 application/server.py revoke DEVICE_ID
 ```
 
-Verify locally: `curl -fsS http://127.0.0.1:8092/api/health`. The server binds to loopback; it does not directly listen on the LAN. If enabled, Tailscale reverse-proxies it using Funnel or Serve.
+Pairing codes expire in five minutes and are single use; five incorrect attempts invalidate a code. To revoke a device, run `python3 application/server.py revoke DEVICE_ID` with its actual ID.
 
-**Data location:** `~/PocketVault/data/` contains `pibackup.db`, `originals/`, `incomplete/` and `thumbnails/`. Back up the entire directory. Use distinct directories and ports for testing alongside existing installations.
+## Storage
 
-**Not yet shipped:** `pocketvault` command-line wrapper, production `setup.sh`, systemd unit, backup/migration tooling. Avoid running a legacy installer from a different PiBackup project.
+The data directory is created automatically beside application:
+- data/pibackup.db: SQLite metadata, token hashes and pairing state.
+- data/originals/: media, organized by reported source folder for new uploads.
+- data/thumbnails/: derived previews.
+- data/incomplete/: unfinished uploads.
+
+Do not edit the database or move originals manually. Keep an independent backup of the complete data directory. The server limits files to 20 GB, chunks to 4 MiB and maintains a 3 GB free-space reserve for uploads. Trash references expire after 30 days.
+
+Next: [Automatic startup](AUTO_START.md).
