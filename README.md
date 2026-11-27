@@ -1,37 +1,37 @@
 # PocketVault
 
-Self-hosted Android photo/video backup for Raspberry Pi, with optional Tailscale access.
+Self-hosted Android photo and video backup for Raspberry Pi, with optional HTTPS access using Tailscale Funnel.
 
-> **v5.0.0-rc2 — Release candidate, not production-security-certified.** The Android APK has passed functional testing, but the Python server still needs security hardening. Do not expose sensitive backups through public Funnel until this is complete.
+> **v5.0.0-rc2 — public release candidate. Not production-security-certified.** Do not expose sensitive backups through a public Funnel until server hardening and independent security testing are complete. The tested companion server supports device pairing, resumable chunk uploads, SHA-256 content verification, deduplication, media metadata, recycle-bin APIs and authenticated device logout.
 
 ## Components
 
-- **Android**: signed APK distributed through GitHub Releases; **Android source code is not included in this repository**.
-- **Server**: Python 3.11, SQLite, SHA-256 integrity checks, chunked uploads, deduplication, device pairing and token revocation.
-- **Remote access**: Tailscale Funnel (public HTTPS) or Tailscale Serve (private tailnet).
+- `app/` — Android Kotlin / Jetpack Compose project (`com.pocketvault.app`, Android 10+).
+- `server/application/server.py` — Python / SQLite server, currently tested with Python 3.11 on Raspberry Pi OS Bookworm.
+- `docs/` — Raspberry Pi, manual server, Tailscale, Funnel, Android, security and troubleshooting guides.
+- `scripts/` — initial development setup scripts; production one-command installer is **not yet available**.
 
-## Installation
+## Quick start (development / non-sensitive data)
 
-1. Install **64-bit Raspberry Pi OS** and `python3`, `python3-pil`, `ffmpeg`.
-2. Clone this repository when the full source import is completed.
-3. Prepare `~/PocketVault/application` and `~/PocketVault/data`; put the RC2 `server.py` into `application/`.
-4. From `~/PocketVault`, run `python3 application/server.py init` and `python3 application/server.py serve --port 8092`.
-5. Use `python3 application/server.py pair` from a second terminal to obtain a five-minute pairing code.
-6. Optionally configure Tailscale and a `/pocketvault` Funnel path. Enter the HTTPS URL in Android.
-7. Install the **signed** `PocketVault-v5.0.0-rc2.apk` when it is attached to GitHub Releases.
+1. Install Raspberry Pi OS 64-bit and Python 3.11; follow [Pi setup](docs/RASPBERRY_PI_SETUP.md).
+2. Follow [manual server setup](docs/SERVER_SETUP.md). Do **not** run an unreviewed legacy `setup.sh`.
+3. For remote access follow [Tailscale and Funnel](docs/TAILSCALE_FUNNEL.md), recognizing that Funnel is public.
+4. Install the signed Android APK from a GitHub pre-release once its asset is attached. Confirm its SHA-256 using [release verification](docs/ANDROID_SETUP.md).
+5. On the Pi use `python3 server.py pair`, then configure the server's HTTPS URL and enter the pairing code in Android.
 
-**Important:** Raspberry Pi server source and the production installer are still being prepared for this repository. Android source will not be uploaded. Do not assume the commands above form a hardened unattended deployment. Existing server data is under `data/` and the compatibility database is called `pibackup.db`; never rename or delete it without a backup.
+## Security and limitations
 
-## APK checksum
+- **Funnel exposes the app to the public internet.** A trusted private tailnet, firewall, or VPN-only arrangement is safer for sensitive media until server hardening is complete.
+- Media are ordinary files beneath the server's `data/originals/` directory and metadata are in SQLite. Back these up separately.
+- RC2 uses a metadata database named `pibackup.db` for compatibility with existing installations. Do not rename it manually.
+- The current server lacks full limits for unauthenticated connections, crash/disk-full testing and other production hardening. Gallery/recycle API endpoints exist, but Android gallery UI remains future work.
+- Do not commit Android signing keystores, passwords, pairing codes, token files, personal media, databases or host-specific configuration.
+- A systemd installer, secure automated migration, full validation and production-readiness review remain on the roadmap.
 
-SHA-256: `50124279ced4c95b7fcf120b025fcf7e477fac4161e21d4168c802f5d6b9dc4a`
+## Development
 
-Certificate SHA-256: `7e0124e1497ea60f5c19ee85c0c3a2fc764acf96fe62eddf751f42e99077edf9`
+Open the repository root in Android Studio and use Gradle to build. Use **your own** persistent signing keystore for release APKs. Never publish signing credentials. See [Android guide](docs/ANDROID_SETUP.md).
 
-## Current limitations
+## Legal
 
-Production security hardening, validated one-command installer/systemd, fresh-install regression and exact resume-offset observation are outstanding. Android gallery and recycle UI are deferred.
-
-See [SECURITY.md](SECURITY.md), [CHANGELOG.md](CHANGELOG.md) and the full source archive prepared for this release. Never commit keystores, database, phone media, tokens or personal configuration.
-
-MIT License — © 2026 Pocket Solutions.
+MIT License; see [LICENSE](LICENSE). Third-party dependencies retain their own licences.
